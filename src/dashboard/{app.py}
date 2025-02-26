@@ -1,0 +1,137 @@
+if date_range == "Custom":
+    col1, col2 = st.sidebar.columns(2)
+    start_date = col1.date_input("Start Date", datetime.now() - timedelta(days=30))
+    end_date = col2.date_input("End Date", datetime.now())
+else:
+    if date_range == "Last 7 days":
+        days = 7
+    elif date_range == "Last 30 days":
+        days = 30
+    else:  # Last 90 days
+        days = 90
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+data_source = st.sidebar.multiselect(
+    "Data Sources",
+    options=["Email Analysis", "Reviews", "Website Analytics", "Sales Data"],
+    default=["Email Analysis", "Website Analytics"]
+)
+
+# Main dashboard
+st.title("Business Intelligence Dashboard")
+st.write(f"Data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+# Function to load data
+@st.cache_data(ttl=3600)
+def load_email_data():
+    """Load email analysis data from Google Sheets."""
+    service = get_sheets_service()
+    df = read_from_sheets(service, SPREADSHEET_ID, "Emails!A:F")
+    if not df.empty:
+        # Convert date column
+        df['Date'] = pd.to_datetime(df.iloc[:, 5])
+        # Filter by date range
+        df = df[(df['Date'] >= pd.Timestamp(start_date)) & 
+                (df['Date'] <= pd.Timestamp(end_date))]
+    return df
+
+@st.cache_data(ttl=3600)
+def load_analytics_data():
+    """Load analytics data."""
+    service = get_analytics_service()
+    view_id = "12345678"  # Replace with your actual view ID
+    df = get_page_metrics(
+        service,
+        view_id,
+        start_date.strftime('%Y-%m-%d'),
+        end_date.strftime('%Y-%m-%d')
+    )
+    return df
+
+# Dashboard layout
+if "Email Analysis" in data_source:
+    st.header("Email Analysis")
+    
+    try:
+        email_data = load_email_data()
+        
+        if email_data.empty:
+            st.info("No email data available for the selected date range.")
+        else:
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Total Emails", len(email_data))
+            
+            with col2:
+                if 'Sentiment' in email_data.columns:
+                    positive = sum(email_data['Sentiment'] == 'positive')
+                    st.metric("Positive Sentiment", f"{positive} ({positive/len(email_data):.1%})")
+            
+            with col3:
+                if 'Sentiment' in email_data.columns:
+                    negative = sum(email_data['Sentiment'] == 'negative')
+                    st.metric("Negative Sentiment", f"{negative} ({negative/len(email_data):.1%})")
+            
+            # Display charts
+            if 'Sentiment' in email_data.columns:
+                st.subheader("Sentiment Distribution")
+                sentiment_counts = email_data['Sentiment'].value_counts()
+                fig, ax = plt.subplots()
+                ax.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%')
+                st.pyplot(fig)
+            
+            # Display recent emails
+            st.subheader("Recent Emails")
+            st.dataframe(email_data.head(10))
+    
+    except Exception as e:
+        st.error(f"Error loading email data: {str(e)}")
+
+if "Website Analytics" in data_source:
+    st.header("Website Analytics")
+    
+    try:
+        analytics_data = load_analytics_data()
+        
+        if analytics_data.empty:
+            st.info("No analytics data available for the selected date range.")
+        else:
+            # Display metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_sessions = analytics_data['ga:sessions'].sum()
+                st.metric("Total Sessions", f"{total_sessions:,}")
+            
+            with col2:
+                total_pageviews = analytics_data['ga:pageviews'].sum()
+                st.metric("Total Pageviews", f"{total_pageviews:,}")
+            
+            with col3:
+                avg_bounce_rate = analytics_data['ga:bounceRate'].mean()
+                st.metric("Avg. Bounce Rate", f"{avg_bounce_rate:.1f}%")
+            
+            # Display top pages
+            st.subheader("Top Pages by Pageviews")
+            top_pages = analytics_data.sort_values('ga:pageviews', ascending=False).head(10)
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.barplot(x='ga:pageviews', y='ga:pagePath', data=top_pages, ax=ax)
+            ax.set_xlabel('Pageviews')
+            ax.set_ylabel('Page Path')
+            st.pyplot(fig)
+            
+            # Display pages with high bounce rates
+            st.subheader("Pages with Highest Bounce Rates")
+            high_bounce = analytics_data[analytics_data['ga:pageviews'] > 10].sort_values('ga:bounceRate', ascending=False).head(10)
+            st.dataframe(high_bounce)
+    
+    except Exception as e:
+        st.error(f"Error loading analytics data: {str(e)}")
+
+# Add more sections for other data sources as needed
+
+# Run the dashboard with: streamlit run src/dashboard/app.py
